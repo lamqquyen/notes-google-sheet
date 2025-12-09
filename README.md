@@ -11,7 +11,6 @@
 
 ## Cấu hình Google Sheets
 
-
 1) Tạo file `.env` ở thư mục gốc và thêm:
 ```
 VITE_SHEET_WEBAPP_URL=https://script.google.com/macros/s/your-webapp-id/exec
