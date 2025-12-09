@@ -13,7 +13,7 @@
 
 1) Tạo file `.env` ở thư mục gốc và thêm:
 ```
-VITE_SHEET_WEBAPP_URL=https://script.google.com/macros/s/your-webapp-id/exec
+VITE_SHEET_WEBAPP_URL=https://script.google.com/macros/s/your-webapp-id/exec 
 ```
    (thay URL bằng web app của Google Apps Script của bạn)
 
