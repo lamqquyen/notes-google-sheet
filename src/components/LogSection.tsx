@@ -78,7 +78,7 @@ export function LogSection({
         <>
           <LogHeader>
             <h3 style={{ margin: 0, fontSize: 16, color: "#0f172a" }}>
-              Top 10 bản ghi gần đây
+              Bản ghi trong 2 ngày qua
             </h3>
             <Button
               type="button"

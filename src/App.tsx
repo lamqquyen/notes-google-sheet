@@ -3,7 +3,6 @@ import { useForm } from "react-hook-form";
 import {
   deleteEntry,
   fetchLogsByDateRange,
-  fetchRecentItems,
   fetchTotal,
   logEntry,
   type SheetLogResponse,
@@ -13,6 +12,7 @@ import {
   sortLogsByDateDesc,
   getTodayVNT,
   getDefaultDateRange,
+  getPastTwoDaysRange,
   convertDDMMYYYYToYYYYMMDD,
   requiredMessage,
 } from "./utils";
@@ -74,16 +74,23 @@ function App() {
   const amountValue = watch("amount");
 
 
+  // Helper function to fetch recent items by creation date (past 2 days)
+  const fetchRecentItemsByCreationDate = async (): Promise<SheetLogResponse> => {
+    const pastTwoDaysRange = getPastTwoDaysRange();
+    // Backend now filters by creation date, so we can directly use the date range
+    return fetchLogsByDateRange(pastTwoDaysRange.from, pastTwoDaysRange.to);
+  };
+
   // Fetch total and recent items on mount
   useEffect(() => {
     const loadData = async () => {
       try {
-        const [totalValue, recentData] = await Promise.all([
+        const [totalValue, filteredData] = await Promise.all([
           fetchTotal(),
-          fetchRecentItems(10)
+          fetchRecentItemsByCreationDate()
         ]);
         setTotal(totalValue);
-        setRecentLogs(sortLogsByDateDesc(recentData));
+        setRecentLogs(sortLogsByDateDesc(filteredData));
       } catch (error) {
         console.error("Failed to fetch data:", error);
       } finally {
@@ -96,8 +103,8 @@ function App() {
   const onFetchRecentItems = async () => {
     setLogState({ status: "submitting" });
     try {
-      const data = await fetchRecentItems(10);
-      setRecentLogs(sortLogsByDateDesc(data));
+      const filteredData = await fetchRecentItemsByCreationDate();
+      setRecentLogs(sortLogsByDateDesc(filteredData));
       setLogState({ status: "success", message: "Đã tải dữ liệu." });
     } catch (error) {
       const message =
@@ -234,7 +241,7 @@ function App() {
           // Refresh both recentLogs and total
           try {
             const [recentData, totalValue] = await Promise.all([
-              fetchRecentItems(10),
+              fetchRecentItemsByCreationDate(),
               fetchTotal()
             ]);
             setRecentLogs(sortLogsByDateDesc(recentData));
@@ -279,7 +286,7 @@ function App() {
           // Refresh both recentLogs and total
           try {
             const [recentData, totalValue] = await Promise.all([
-              fetchRecentItems(10),
+              fetchRecentItemsByCreationDate(),
               fetchTotal()
             ]);
             setRecentLogs(sortLogsByDateDesc(recentData));
@@ -393,7 +400,7 @@ function App() {
           const promises: Promise<any>[] = [fetchTotal()];
           
           if (activeTab === "recent") {
-            promises.push(fetchRecentItems(10));
+            promises.push(fetchRecentItemsByCreationDate());
           } else if (activeTab === "filter" && dateFrom && dateTo) {
             promises.push(fetchLogsByDateRange(dateFrom, dateTo));
           }
@@ -434,7 +441,7 @@ function App() {
           const promises: Promise<any>[] = [fetchTotal()];
           
           if (activeTab === "recent") {
-            promises.push(fetchRecentItems(10));
+            promises.push(fetchRecentItemsByCreationDate());
           } else if (activeTab === "filter" && dateFrom && dateTo) {
             promises.push(fetchLogsByDateRange(dateFrom, dateTo));
           }

@@ -145,3 +145,22 @@ export function getDefaultDateRange() {
     to: todayVNT,
   };
 }
+
+export function getPastTwoDaysRange() {
+  const todayVNT = getTodayVNT();
+  const todayParts = todayVNT.split('-');
+  const todayDate = new Date(parseInt(todayParts[0]), parseInt(todayParts[1]) - 1, parseInt(todayParts[2]));
+  const twoDaysAgo = new Date(todayDate);
+  twoDaysAgo.setDate(todayDate.getDate() - 2);
+  
+  const year = twoDaysAgo.getFullYear();
+  const month = String(twoDaysAgo.getMonth() + 1).padStart(2, '0');
+  const day = String(twoDaysAgo.getDate()).padStart(2, '0');
+  const twoDaysAgoVNT = `${year}-${month}-${day}`;
+  
+  return {
+    from: twoDaysAgoVNT,
+    to: todayVNT,
+  };
+}
+
