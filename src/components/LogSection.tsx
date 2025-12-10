@@ -12,6 +12,7 @@ import {
   Button,
   Input,
   DeleteButton,
+  Row,
 } from "../styles";
 import { SelectionControls } from "./SelectionControls";
 import { LogRow } from "./LogRow";
@@ -106,7 +107,10 @@ export function LogSection({
               )}
               <LogList>
                 <div>
-                  <strong>Chi tiền</strong>
+                  <Row>
+                    <strong>Chi tiền:</strong>
+                    <strong style={{color: 'red'}}>Tổng chi: {recentLogs.spending?.reduce((acc, item) => acc + item.amount, 0).toLocaleString("vi-VN")}</strong>
+                  </Row>
                   {recentLogs.spending?.length ? (
                     <LogRowContainer>
                       {recentLogs.spending.map((item, idx) => (
@@ -125,7 +129,10 @@ export function LogSection({
                   )}
                 </div>
                 <div>
-                  <strong>Nhận tiền</strong>
+                  <Row>
+                    <strong>Nhận tiền:</strong>
+                    <strong style={{color: 'green'}}>Tổng nhận: {recentLogs.receiving?.reduce((acc, item) => acc + item.amount, 0).toLocaleString("vi-VN")}</strong>
+                  </Row>
                   {recentLogs.receiving?.length ? (
                     <LogRowContainer>
                       {recentLogs.receiving.map((item, idx) => (
@@ -192,7 +199,10 @@ export function LogSection({
               )}
               <LogList>
                 <div>
-                  <strong>Chi tiền</strong>
+                  <Row>
+                    <strong>Chi tiền:</strong>
+                    <strong style={{color: 'red'}}>Tổng chi: {logs.spending?.reduce((acc, item) => acc + item.amount, 0).toLocaleString("vi-VN")}</strong>
+                  </Row>
                   {logs.spending?.length ? (
                     <LogRowContainer>
                       {logs.spending.map((item, idx) => (
@@ -211,7 +221,10 @@ export function LogSection({
                   )}
                 </div>
                 <div>
-                  <strong>Nhận tiền</strong>
+                  <Row>
+                    <strong>Nhận tiền:</strong>
+                    <strong style={{color: 'green'}}>Tổng nhận: {logs.receiving?.reduce((acc, item) => acc + item.amount, 0).toLocaleString("vi-VN")}</strong>
+                  </Row>
                   {logs.receiving?.length ? (
                     <LogRowContainer>
                       {logs.receiving.map((item, idx) => (

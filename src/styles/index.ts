@@ -358,6 +358,13 @@ export const LogRowContainer = styled.div`
   margin: 8px 0;
 `;
 
+export const Row = styled.div`
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+`;
+
 export const TotalDisplay = styled.div`
   padding: 20px;
   border-radius: 14px;
