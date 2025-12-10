@@ -8,6 +8,10 @@ const SPENDING_SHEET = 'Spending';
 
 const RECEIVING_SHEET = 'Receiving';
 
+// Notification settings - configure these
+const TELEGRAM_BOT_TOKEN = '8423739750:AAGZou831DWuij69FqK0cDsUqU3AtPP2oVk'; // Your Telegram bot token (optional, leave empty to disable)
+const TELEGRAM_CHAT_ID = '-5064851741'; // Your Telegram chat ID (optional, leave empty to disable)
+
 // ===== Helpers =====
 
 function jsonOutput(obj) {
@@ -33,7 +37,7 @@ function ensureTotalSheet_(totalSheet) {
     totalSheet.getRange('A1').setValue('TOTAL');
   }
   if (totalSheet.getRange('A2').isBlank()) {
-    totalSheet.getRange('A2').setValue(0);
+    totalSheet.getRange('A2').setValue("=SUM(Receiving!C:C)-SUM(Spending!D:D)");
   }
 }
 
@@ -90,6 +94,94 @@ function isRowEmpty_(row, isSpending) {
   }
 }
 
+// ===== Notifications =====
+
+function sendNotification_(subject, message) {
+  Logger.log('sendNotification_ called with subject: ' + subject);
+  // Send Telegram notification if configured
+  if (TELEGRAM_BOT_TOKEN && TELEGRAM_BOT_TOKEN.trim() !== '' && 
+      TELEGRAM_CHAT_ID && TELEGRAM_CHAT_ID.trim() !== '') {
+    Logger.log('Telegram credentials found, sending notification...');
+    try {
+      const telegramUrl = 'https://api.telegram.org/bot' + TELEGRAM_BOT_TOKEN + '/sendMessage';
+      const fullMessage = subject + '\n\n' + message;
+      
+      // Convert chat_id to string (Telegram API accepts both string and number)
+      const chatId = String(TELEGRAM_CHAT_ID).trim();
+      
+      const payload = {
+        chat_id: chatId,
+        text: fullMessage,
+        parse_mode: 'HTML'
+      };
+      
+      const options = {
+        method: 'post',
+        contentType: 'application/json',
+        payload: JSON.stringify(payload),
+        muteHttpExceptions: false // Set to false to see errors
+      };
+      
+      const response = UrlFetchApp.fetch(telegramUrl, options);
+      const responseCode = response.getResponseCode();
+      const responseText = response.getContentText();
+      
+      // Check if the request was successful
+      if (responseCode !== 200) {
+        Logger.log('Telegram API error - Status: ' + responseCode + ', Response: ' + responseText);
+        return false;
+      }
+      
+      // Parse response to check if Telegram API returned an error
+      try {
+        const responseJson = JSON.parse(responseText);
+        if (!responseJson.ok) {
+          Logger.log('Telegram API returned error: ' + JSON.stringify(responseJson));
+          return false;
+        }
+      } catch (parseError) {
+        Logger.log('Failed to parse Telegram response: ' + responseText);
+        return false;
+      }
+      
+      Logger.log('Telegram notification sent successfully');
+      return true;
+    } catch (e) {
+      Logger.log('Failed to send Telegram notification: ' + e.toString());
+      Logger.log('Stack trace: ' + e.stack);
+      return false;
+    }
+  } else {
+    Logger.log('Telegram credentials not configured or empty');
+  }
+  return false;
+}
+
+function formatAmount_(amount) {
+  return new Intl.NumberFormat('vi-VN').format(amount) + ' đ';
+}
+
+function formatDate_(date) {
+  if (!date) return '';
+  const d = date instanceof Date ? date : new Date(date);
+  const day = String(d.getDate()).padStart(2, '0');
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const year = d.getFullYear();
+  return day + '/' + month + '/' + year;
+}
+
+// Check if total is low and send top-up notification
+function checkAndNotifyLowBalance_(totalAmount) {
+  const LOW_BALANCE_THRESHOLD = 50000;
+  
+  if (totalAmount < LOW_BALANCE_THRESHOLD) {
+    const subject = '⚠️ Sắp hết quỹ';
+    const message = 'Số dư hiện tại chỉ còn: ' + formatAmount_(totalAmount) + '\n'
+    Logger.log('Low balance detected: ' + totalAmount + ' < ' + LOW_BALANCE_THRESHOLD);
+    sendNotification_(subject, message);
+  }
+}
+
 // ===== POST (create + delete) =====
 
 function doPost(e) {
@@ -104,7 +196,7 @@ function doPost(e) {
       if (!id || !type) {
         return jsonOutput({ ok: false, error: 'Thiếu id hoặc type' });
       }
-      
+
       if (type === 'spending') {
         const sheet = spending;
         const dataRange = sheet.getDataRange();
@@ -113,8 +205,27 @@ function doPost(e) {
         // Find the row to delete (skip header row, start from index 1)
         for (let i = 1; i < values.length; i++) {
           if (String(values[i][0]) === id) {
+            const deletedRow = values[i];
+            const deletedDate = deletedRow[1];
+            const deletedDescription = deletedRow[2] || '';
+            const deletedAmount = deletedRow[3] || 0;
+            
             // deleteRow automatically shifts all rows below up
             sheet.deleteRow(i + 1); // +1 because deleteRow uses 1-based indexing
+            
+            // Send notification
+            const currentTotal = Number(total.getRange('A2').getValue()) || 0;
+            const subject = '🗑️ Đã xóa bản ghi chi tiêu';
+            const message = 'Đã xóa bản ghi:\n' +
+              '📅 Ngày: ' + formatDate_(deletedDate) + '\n' +
+              '📝 Mô tả: ' + (deletedDescription || '—') + '\n' +
+              '💰 Số tiền: ' + formatAmount_(deletedAmount) + '\n' +
+              '💵 Tổng tiền còn lại: ' + formatAmount_(currentTotal);
+            sendNotification_(subject, message);
+            
+            // Check for low balance and notify
+            checkAndNotifyLowBalance_(currentTotal);
+            
             return jsonOutput({ ok: true, deleted: id });
           }
         }
@@ -127,8 +238,25 @@ function doPost(e) {
         // Find the row to delete (skip header row, start from index 1)
         for (let i = 1; i < values.length; i++) {
           if (String(values[i][0]) === id) {
+            const deletedRow = values[i];
+            const deletedDate = deletedRow[1];
+            const deletedAmount = deletedRow[2] || 0;
+            
             // deleteRow automatically shifts all rows below up
             sheet.deleteRow(i + 1); // +1 because deleteRow uses 1-based indexing
+            
+            // Send notification
+            const currentTotal = Number(total.getRange('A2').getValue()) || 0;
+            const subject = '🗑️ Đã xóa bản ghi nhận tiền';
+            const message = 'Đã xóa bản ghi:\n' +
+              '📅 Ngày: ' + formatDate_(deletedDate) + '\n' +
+              '💰 Số tiền: ' + formatAmount_(deletedAmount) + '\n' +
+              '💵 Tổng tiền còn lại: ' + formatAmount_(currentTotal);
+            sendNotification_(subject, message);
+            
+            // Check for low balance and notify
+            checkAndNotifyLowBalance_(currentTotal);
+            
             return jsonOutput({ ok: true, deleted: id });
           }
         }
@@ -146,19 +274,68 @@ function doPost(e) {
     
     if (type === 'spending') {
       // Spending: A=ID, B=Date (occurredAt), C=Description, D=Amount, E=CreatedAt
-      const row = spending.appendRow([uuid, new Date(occurredAt), description, Number(amount), now]).getRow();
+      spending.appendRow([uuid, new Date(occurredAt), description, Number(amount), now]);
+      const row = spending.getLastRow();
       spending.getRange(row, 2).setNumberFormat('dd/MM/yyyy');
       spending.getRange(row, 5).setNumberFormat('dd/MM/yyyy'); // Format creation date
     } else {
       // Receiving: A=ID, B=Date (occurredAt), C=Amount, D=CreatedAt
-      const row = receiving.appendRow([uuid, new Date(occurredAt), Number(amount), now]).getRow();
+      receiving.appendRow([uuid, new Date(occurredAt), Number(amount), now]);
+      const row = receiving.getLastRow();
       receiving.getRange(row, 2).setNumberFormat('dd/MM/yyyy');
       receiving.getRange(row, 4).setNumberFormat('dd/MM/yyyy'); // Format creation date
     }
 
-    const currentTotal = Number(total.getRange('A2').getValue()) || 0;
-    const delta = type === 'spending' ? -Number(amount) : Number(amount);
-    total.getRange('A2').setValue(currentTotal + delta);
+    // Force spreadsheet to recalculate formulas
+    SpreadsheetApp.flush();
+
+    // Get total after adding the row (formula will auto-calculate)
+    // Try reading it a couple times to ensure formula has recalculated
+    let newTotal = Number(total.getRange('A2').getValue()) || 0;
+    Utilities.sleep(100); // Small delay to ensure formula recalculates
+    SpreadsheetApp.flush();
+    newTotal = Number(total.getRange('A2').getValue()) || 0;
+
+    Logger.log('About to send notification for new ' + type + ' record. Total: ' + newTotal);
+
+    // Send notification - do this BEFORE returning
+    let notificationSent = false;
+    try {
+      if (type === 'spending') {
+        const subject = '💸 Đã thêm chi tiêu mới';
+        const message = 'Đã thêm bản ghi chi tiêu:\n' +
+          '📅 Ngày: ' + formatDate_(new Date(occurredAt)) + '\n' +
+          '📝 Mô tả: ' + (description || '—') + '\n' +
+          '💰 Số tiền: ' + formatAmount_(Number(amount)) + '\n' +
+          '💵 Tổng tiền còn lại: ' + formatAmount_(newTotal);
+        Logger.log('Calling sendNotification_ for spending...');
+        notificationSent = sendNotification_(subject, message);
+        Logger.log('sendNotification_ returned: ' + notificationSent);
+      } else {
+        const subject = '💵 Đã thêm nhận tiền mới';
+        const message = 'Đã thêm bản ghi nhận tiền:\n' +
+          '📅 Ngày: ' + formatDate_(new Date(occurredAt)) + '\n' +
+          '💰 Số tiền: ' + formatAmount_(Number(amount)) + '\n' +
+          '💵 Tổng tiền còn lại: ' + formatAmount_(newTotal);
+        Logger.log('Calling sendNotification_ for receiving...');
+        notificationSent = sendNotification_(subject, message);
+        Logger.log('sendNotification_ returned: ' + notificationSent);
+      }
+      Logger.log('Notification process completed. Result: ' + notificationSent);
+      
+      // Check for low balance and notify
+      checkAndNotifyLowBalance_(newTotal);
+    } catch (notifError) {
+      Logger.log('EXCEPTION in notification code: ' + notifError.toString());
+      Logger.log('Stack: ' + notifError.stack);
+      // Don't fail the whole operation if notification fails
+      // Still check for low balance even if main notification failed
+      try {
+        checkAndNotifyLowBalance_(newTotal);
+      } catch (e) {
+        Logger.log('Error checking low balance: ' + e.toString());
+      }
+    }
 
     return jsonOutput({ ok: true, id: uuid });
   } catch (e) {
