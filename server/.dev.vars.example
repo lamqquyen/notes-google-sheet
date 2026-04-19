@@ -1,0 +1,11 @@
+# Local dev overrides for `wrangler dev`. Copy to .dev.vars and fill in.
+TELEGRAM_BOT_TOKEN=
+TELEGRAM_WEBHOOK_SECRET=local-secret
+TELEGRAM_ALLOWED_USER_IDS=
+# Optional: CSV of group/supergroup chat ids (negative numbers). Anyone in the
+# listed chats can use the bot regardless of their personal user id. Find a
+# chat id by sending a message in the group and checking `wrangler tail`.
+TELEGRAM_ALLOWED_CHAT_IDS=
+SHEET_WEBAPP_URL=
+LLM_API_KEY=
+CHAT_SHARED_SECRET=local-shared

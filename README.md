@@ -14,8 +14,14 @@
 1) Tạo file `.env` ở thư mục gốc và thêm:
 ```
 VITE_SHEET_WEBAPP_URL=https://script.google.com/macros/s/your-webapp-id/exec
+
+# Chatbot (tuỳ chọn) – cần khi dùng widget chat trong app
+VITE_CHAT_API_URL=https://notes-bot.<account>.workers.dev
+VITE_CHAT_API_SECRET=<chat-shared-secret-giong-CHAT_SHARED_SECRET-cua-Worker>
 ```
    (thay URL bằng web app của Google Apps Script của bạn)
+
+   Chi tiết triển khai chatbot (Telegram + widget) xem tại [`server/README.md`](server/README.md).
 
 2) Sheet hiện dùng: https://docs.google.com/spreadsheets/d/1voZnl0qLLD7UdrIelONjnAt599IxpfWSWJPQRHtajfs/edit?gid=0#gid=0  
    Hãy triển khai Apps Script web app trỏ tới sheet này và cấp quyền ghi.

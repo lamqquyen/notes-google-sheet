@@ -28,6 +28,7 @@ import { LoadingOverlay } from "./components/LoadingOverlay";
 import { TotalDisplay } from "./components/TotalDisplay";
 import { TransactionForm } from "./components/TransactionForm";
 import { LogSection } from "./components/LogSection";
+import { ChatWidget } from "./components/Chat/ChatWidget";
 
 
 function App() {
@@ -99,6 +100,26 @@ function App() {
     };
     loadData();
   }, []);
+
+  const refreshAfterWrite = async () => {
+    try {
+      const promises: Promise<unknown>[] = [
+        fetchTotal(),
+        fetchRecentItemsByCreationDate(),
+      ];
+      if (activeTab === "filter" && dateFrom && dateTo) {
+        promises.push(fetchLogsByDateRange(dateFrom, dateTo));
+      }
+      const results = await Promise.all(promises);
+      setTotal(results[0] as number);
+      setRecentLogs(sortLogsByDateDesc(results[1] as SheetLogResponse));
+      if (activeTab === "filter" && results[2]) {
+        setLogs(sortLogsByDateDesc(results[2] as SheetLogResponse));
+      }
+    } catch (e) {
+      console.error("Failed to refresh data:", e);
+    }
+  };
 
   const onFetchRecentItems = async () => {
     setLogState({ status: "submitting" });
@@ -531,6 +552,7 @@ function App() {
           </Card>
         </Page>
       )}
+      {!isInitialLoading && <ChatWidget onDataChanged={refreshAfterWrite} />}
     </>
   );
 }

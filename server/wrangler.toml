@@ -1,0 +1,28 @@
+name = "notes-bot"
+main = "src/index.ts"
+compatibility_date = "2026-04-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Per-user short-term memory for the agent loop (Phase 2b).
+# Create with:  wrangler kv namespace create CHAT_MEMORY
+# Then paste the returned id below.
+# [[kv_namespaces]]
+# binding = "CHAT_MEMORY"
+# id = "REPLACE_WITH_ID"
+
+[vars]
+# Non-secret, environment-specific defaults. Override per environment as needed.
+ALLOWED_ORIGIN = "http://localhost:5173"
+LLM_PROVIDER = "groq"                 # groq | gemini | openai | ollama
+LLM_MODEL = "llama-3.1-8b-instant"
+LLM_BASE_URL = "https://api.groq.com/openai/v1"
+AGENT_MAX_TURNS = "4"
+
+# Secrets (set via `wrangler secret put NAME`):
+#   TELEGRAM_BOT_TOKEN
+#   TELEGRAM_WEBHOOK_SECRET           # any random string; sent in setWebhook
+#   TELEGRAM_ALLOWED_USER_IDS         # csv of numeric user ids (DM use)
+#   TELEGRAM_ALLOWED_CHAT_IDS         # OPTIONAL csv of group chat ids (negative numbers)
+#   SHEET_WEBAPP_URL                  # same URL as VITE_SHEET_WEBAPP_URL in the React app
+#   LLM_API_KEY                       # ignored when LLM_PROVIDER=ollama
+#   CHAT_SHARED_SECRET                # required header for /chat from the React widget
