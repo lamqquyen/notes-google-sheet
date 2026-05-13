@@ -15,7 +15,7 @@ import {
   rememberLastEntry,
   saveHistory,
 } from "./memory";
-import type { BotReply, ChatContext, Env, EntryType, LastEntryItem } from "./types";
+import { type BotReply, type ChatContext, type Env, type EntryType, type LastEntryItem, undoScope } from "./types";
 
 const TOOLS: ToolDefinition[] = [
   {
@@ -78,7 +78,7 @@ const TOOLS: ToolDefinition[] = [
     function: {
       name: "undo_last_entry",
       description:
-        "Delete the most recent entry the current user logged via this bot (undo). No arguments.",
+        "Delete the most recent batch logged in this chat (undo). Any member can invoke; no arguments.",
       parameters: { type: "object", properties: {} },
     },
   },
@@ -91,7 +91,7 @@ Reply in concise Vietnamese. Always use the provided tools to read/write data; n
 - The description text may come EITHER BEFORE the amount ("thịt 200k", "cà phê 20k") OR AFTER it ("200k thịt"). Both orders are valid.
 - Amount units: k=1000, tr/trieu=1000000. Integers in VND only.
 - If date is missing, use today's date.
-- If the user mentions multiple entries in one message ("chi 50k cafe, 30k taxi", "chi 50k cafe và thu 2tr lương", new-line separated, ...), call log_entry once per entry in the SAME turn. The system groups them so one /undo reverts the whole batch.
+- If the user mentions multiple entries in one message ("chi 50k cafe, 30k taxi", "chi 50k cafe và thu 2tr lương", new-line separated, ...), call log_entry once per entry in the SAME turn. The system groups them so one /undo reverts the whole batch for this chat (shared in groups).
 - Confirm before calling delete_entry.`;
 
 interface AgentToolResult {
@@ -107,6 +107,16 @@ interface AgentToolResult {
  */
 interface AgentRunState {
   loggedItems: LastEntryItem[];
+}
+
+async function appendCurrentBalanceIfLogged(
+  env: Env,
+  state: AgentRunState,
+  text: string,
+): Promise<string> {
+  if (state.loggedItems.length === 0) return text;
+  const total = await fetchTotal(env);
+  return `${text}\nSố dư hiện tại: ${formatVnd(total)}.`;
 }
 
 export async function runAgent(env: Env, ctx: ChatContext): Promise<BotReply> {
@@ -134,13 +144,14 @@ export async function runAgent(env: Env, ctx: ChatContext): Promise<BotReply> {
     if (!result.toolCalls || result.toolCalls.length === 0) {
       const finalText = result.content || "Da xong.";
       await persistLoggedItems(env, ctx, state);
+      const finalWithBalance = await appendCurrentBalanceIfLogged(env, state, finalText);
       const newHistory: ChatMessage[] = [
         ...history,
         { role: "user", content: ctx.message },
-        { role: "assistant", content: finalText },
+        { role: "assistant", content: finalWithBalance },
       ];
       await saveHistory(env, ctx.channel, ctx.userId, newHistory);
-      return { text: finalText, refresh };
+      return { text: finalWithBalance, refresh };
     }
 
     messages.push({
@@ -167,7 +178,8 @@ export async function runAgent(env: Env, ctx: ChatContext): Promise<BotReply> {
 
   await persistLoggedItems(env, ctx, state);
   const fallback = "Mình can them thong tin de xu ly tiep, ban viet ro hon nhe.";
-  return { text: fallback, refresh };
+  const text = await appendCurrentBalanceIfLogged(env, state, fallback);
+  return { text, refresh };
 }
 
 async function persistLoggedItems(
@@ -176,7 +188,7 @@ async function persistLoggedItems(
   state: AgentRunState,
 ): Promise<void> {
   if (state.loggedItems.length === 0) return;
-  await rememberLastEntry(env, ctx.channel, ctx.userId, { items: state.loggedItems });
+  await rememberLastEntry(env, ctx.channel, undoScope(ctx), { items: state.loggedItems });
 }
 
 async function runTool(
@@ -240,13 +252,13 @@ async function runTool(
       case "delete_entry": {
         const id = String(args.id);
         await deleteEntry(env, id, args.type as EntryType);
-        const last = await getLastEntry(env, ctx.channel, ctx.userId);
+        const last = await getLastEntry(env, ctx.channel, undoScope(ctx));
         if (last) {
           const remaining = last.items.filter((i) => i.id !== id);
           if (remaining.length === 0) {
-            await forgetLastEntry(env, ctx.channel, ctx.userId);
+            await forgetLastEntry(env, ctx.channel, undoScope(ctx));
           } else if (remaining.length !== last.items.length) {
-            await rememberLastEntry(env, ctx.channel, ctx.userId, { items: remaining });
+            await rememberLastEntry(env, ctx.channel, undoScope(ctx), { items: remaining });
           }
         }
         // Also drop it from the in-flight scratchpad (if the agent just logged
@@ -255,14 +267,14 @@ async function runTool(
         return { reply: JSON.stringify({ ok: true }), refresh: true };
       }
       case "undo_last_entry": {
-        const last = await getLastEntry(env, ctx.channel, ctx.userId);
+        const last = await getLastEntry(env, ctx.channel, undoScope(ctx));
         if (!last || last.items.length === 0) {
           return { reply: JSON.stringify({ ok: false, error: "no recent entry" }) };
         }
         for (const item of last.items) {
           await deleteEntry(env, item.id, item.type);
         }
-        await forgetLastEntry(env, ctx.channel, ctx.userId);
+        await forgetLastEntry(env, ctx.channel, undoScope(ctx));
         state.loggedItems = [];
         return {
           reply: JSON.stringify({

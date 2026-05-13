@@ -24,9 +24,37 @@ function squashSpaces(s: string): string {
   return s.replace(/\s+/g, " ").trim();
 }
 
+/** "a , b" / "a,  b" → "a, b" for grocery-style lists in descriptions. */
+function polishDescriptionCommas(s: string): string {
+  return squashSpaces(s.replace(/\s*,\s*/g, ", "));
+}
+
+/**
+ * Leading "Đã chi" / "Đã thu" (and unaccented variants) is bookkeeping, not the
+ * purchase description. Same string length as stripDiacritics so slice indices
+ * apply to the original segment.
+ */
+function stripLeadingDaVerbClause(raw: string): { text: string; spendReceiveHint?: EntryType } {
+  const lead = raw.match(/^\s*/)?.[0] ?? "";
+  const start = lead.length;
+  const body = raw.slice(start);
+  const norm = stripDiacritics(body.toLowerCase());
+  const spend = /^da\s+(chi|tieu\s+xai|tieu|mua)\b\s*/.exec(norm);
+  if (spend) {
+    const end = start + spend[0].length;
+    return { text: raw.slice(end).trimStart(), spendReceiveHint: "spending" };
+  }
+  const recv = /^da\s+(thu|nhan|nhap|nap)\b\s*/.exec(norm);
+  if (recv) {
+    const end = start + recv[0].length;
+    return { text: raw.slice(end).trimStart(), spendReceiveHint: "receiving" };
+  }
+  return { text: raw };
+}
+
 /**
  * Step A: regex/keyword fast path for the most common Vietnamese phrasings.
- * Returns null when nothing matches and the caller should fall back to the LLM.
+ * Returns an intent (including `clarify`) or null when the caller should fall back to the LLM.
  */
 export function parseWithRegex(rawInput: string, todayIso: string): Intent | null {
   const text = rawInput.trim();
@@ -73,7 +101,13 @@ export function parseWithRegex(rawInput: string, todayIso: string): Intent | nul
   if (slash) {
     const verb = slash[1].toLowerCase();
     const type: EntryType = ["spend", "chi", "tieu"].includes(verb) ? "spending" : "receiving";
-    const parsed = parseAmountAndRest(slash[2], todayIso, defaultDescription(type));
+    const rest = slash[2].trim();
+    const multiFromRest = parseMultipleLogs(rest, todayIso);
+    if (multiFromRest) return multiFromRest;
+    if (countVNUnitAmounts(rest) >= 2) {
+      return { kind: "clarify", question: AMBIGUOUS_MULTI_AMOUNT };
+    }
+    const parsed = parseAmountAndRest(rest, todayIso, defaultDescription(type));
     if (parsed) return { kind: "log", type, ...parsed };
   }
 
@@ -87,18 +121,27 @@ export function parseWithRegex(rawInput: string, todayIso: string): Intent | nul
     const type: EntryType = verbToType(verb);
     const after = freeform.index + freeform[0].length;
     const restOriginal = text.slice(after).trim();
-    // If the user wrote just "thu 2tr" / "nhận 1000k" with no description,
-    // fall back to a default label so we still log the entry instead of
-    // bouncing to the LLM.
+    const multiFromRest = parseMultipleLogs(restOriginal, todayIso);
+    if (multiFromRest) return multiFromRest;
     const parsed = parseAmountAndRest(restOriginal, todayIso, defaultDescription(type));
-    if (parsed) return { kind: "log", type, ...parsed };
+    if (parsed) {
+      if (countVNUnitAmounts(restOriginal) >= 2) {
+        return { kind: "clarify", question: AMBIGUOUS_MULTI_AMOUNT };
+      }
+      return { kind: "log", type, ...parsed };
+    }
   }
 
   // Verbless fallback: "50k cafe", "200k an toi hom qua" → assume spending.
   // Receiving still requires an explicit verb (thu/nhan/luong/recv/...) since
   // misclassifying a spend as income silently inflates the balance.
   const verbless = parseAmountAndRest(text, todayIso);
-  if (verbless) return { kind: "log", type: "spending", ...verbless };
+  if (verbless) {
+    if (countVNUnitAmounts(text) >= 2) {
+      return { kind: "clarify", question: AMBIGUOUS_MULTI_AMOUNT };
+    }
+    return { kind: "log", type: "spending", ...verbless };
+  }
 
   return null;
 }
@@ -127,6 +170,79 @@ function defaultDescription(type: EntryType): string {
   return type === "spending" ? "chi tiêu" : "thu nhập";
 }
 
+/** Several `10k`-style amounts in one fragment without a clear per-line split. */
+const AMBIGUOUS_MULTI_AMOUNT =
+  "Có nhiều số tiền nhưng chưa rõ từng món kèm theo. Bạn ghi rõ từng khoản (vd: 10k nước, 5k cơm) hoặc mỗi dòng một khoản nhé.";
+
+/** Counts amounts with explicit k/tr/… units (avoids treating `50,000` as two numbers). */
+function countVNUnitAmounts(s: string): number {
+  const re = /(\d+(?:[.,]\d+)?)\s*(k|nghin|ngan|tr|trieu|m|million)\b/gi;
+  let n = 0;
+  while (re.exec(s) !== null) n += 1;
+  return n;
+}
+
+/**
+ * True when `seg` can be parsed as one log line (optional leading verb + amount + description).
+ * Used to decide whether a comma ends a segment (so "nấm ,đậu 45k" does NOT split on the first comma).
+ */
+function fragmentParsableAsLog(seg: string, todayIso: string): boolean {
+  const { text } = stripLeadingDaVerbClause(seg);
+  const segNorm = stripDiacritics(text.toLowerCase());
+  const verbMatch =
+    /^\/?(chi|tieu xai|tieu|spend|spent|thu|nhap|recv|received|nhan|nap|mua)\b/.exec(segNorm);
+
+  let segText = text;
+  if (verbMatch) {
+    const type = verbToType(verbMatch[1]);
+    segText = text.slice(verbMatch.index + verbMatch[0].length).trim();
+    const fallback = defaultDescription(type);
+    return parseAmountAndRest(segText, todayIso, fallback) !== null;
+  }
+
+  return parseAmountAndRest(segText, todayIso, "") !== null;
+}
+
+/** A comma/semicolon may start the next entry only if the left side already forms one complete log. */
+function canEndSegmentBeforeComma(left: string, todayIso: string): boolean {
+  const t = left.trimEnd();
+  if (!t) return false;
+  return fragmentParsableAsLog(t, todayIso);
+}
+/**
+ * Split one line on commas/semicolons that separate finished entries. Keeps commas
+ * inside lists before one amount ("nấm ,đậu 45k") and inside numbers ("1,5tr", "50,000").
+ */
+function splitChunkOnCommas(chunk: string, todayIso: string): string[] {
+  const parts: string[] = [];
+  let start = 0;
+  for (let i = 0; i < chunk.length; i++) {
+    const ch = chunk[i];
+    if (ch !== "," && ch !== ";") continue;
+    // Don't break European/VN decimal commas: digit immediately before comma.
+    if (i > 0 && /\d/.test(chunk[i - 1]!)) continue;
+    const left = chunk.slice(start, i);
+    if (!canEndSegmentBeforeComma(left, todayIso)) continue;
+    parts.push(left.trim());
+    start = i + 1;
+  }
+  const tail = chunk.slice(start).trim();
+  if (tail.length > 0) parts.push(tail);
+  return parts;
+}
+
+function splitBatchSeparators(text: string, todayIso: string): string[] {
+  const chunks = text
+    .split(/\s*\n+\s*|\s+(?:va|và|rồi|roi)\s+/i)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+  const out: string[] = [];
+  for (const chunk of chunks) {
+    out.push(...splitChunkOnCommas(chunk, todayIso));
+  }
+  return out;
+}
+
 /**
  * Try to parse the message as multiple log entries separated by ",", ";",
  * newline, or " và "/" rồi ". Each segment may have its own verb prefix; if it
@@ -137,27 +253,24 @@ function defaultDescription(type: EntryType): string {
  * fall through to the existing single-entry parsers / LLM fallback.
  */
 function parseMultipleLogs(text: string, todayIso: string): Intent | null {
-  // Split on:
-  //   - "," or ";" NOT preceded by a digit (so "50,000" / "1,5tr" stays
-  //     intact as a decimal). We deliberately don't require a space or a
-  //     non-digit AFTER the separator, so messy real-world input like
-  //     "10k,5k cơm" (missing space after the comma) still splits cleanly.
-  //   - "\n" (multi-line message)
-  //   - " va "/" và "/" rồi "/" roi " (Vietnamese conjunctions)
-  const parts = text
-    .split(/\s*(?<!\d)[,;]\s*|\s*\n+\s*|\s+(?:va|và|rồi|roi)\s+/i)
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0);
+  const parts = splitBatchSeparators(text, todayIso).filter((s) => s.length > 0);
 
   if (parts.length < 2) return null;
 
   const items: LogItem[] = [];
+  const segmentHadVerb: boolean[] = [];
   // Default to spending when no verb has been seen yet ("50k cafe, 30k taxi").
   // A later segment with an explicit verb (e.g. "thu 2tr lương") overrides it
   // for that segment AND for any subsequent verbless segments.
   let inheritedType: EntryType = "spending";
 
-  for (const seg of parts) {
+  for (const rawSeg of parts) {
+    const daStrip = stripLeadingDaVerbClause(rawSeg);
+    let seg = daStrip.text;
+    if (daStrip.spendReceiveHint) {
+      inheritedType = daStrip.spendReceiveHint;
+    }
+
     const segNorm = stripDiacritics(seg.toLowerCase());
 
     // Match a leading verb (with optional "/" prefix). If absent, reuse the
@@ -167,7 +280,7 @@ function parseMultipleLogs(text: string, todayIso: string): Intent | null {
 
     let segText = seg;
     let type: EntryType = inheritedType;
-    let hadVerb = false;
+    let hadVerb = Boolean(daStrip.spendReceiveHint);
 
     if (verbMatch) {
       type = verbToType(verbMatch[1]);
@@ -183,10 +296,18 @@ function parseMultipleLogs(text: string, todayIso: string): Intent | null {
     const fallback = hadVerb ? defaultDescription(type) : "";
     const parsed = parseAmountAndRest(segText, todayIso, fallback);
     if (!parsed) return null;
+    segmentHadVerb.push(hadVerb);
     items.push({ type, ...parsed });
   }
 
   if (items.length < 2) return null;
+
+  // Reject "chi 50k, 5k cơm": several prices but only one user description unless
+  // each segment has its own verb ("chi 50k, thu 2tr" stays valid).
+  const meaningful = items.filter((i) => i.description !== defaultDescription(i.type)).length;
+  const verbSegs = segmentHadVerb.filter(Boolean).length;
+  if (meaningful === 1 && verbSegs < 2) return null;
+
   return { kind: "logBatch", items };
 }
 
@@ -214,7 +335,10 @@ function parseAmountAndRest(
   if (!combined && !fallback) return null;
 
   const dateInfo = extractDate(combined, todayIso);
-  const description = squashSpaces(dateInfo.cleanedText) || combined || fallback;
+  let description = squashSpaces(dateInfo.cleanedText) || combined || fallback;
+  if (!description) return null;
+  description = stripLeadingDaVerbClause(description).text.trim();
+  description = polishDescriptionCommas(description);
   if (!description) return null;
 
   return { amount, description, occurredAt: dateInfo.iso };

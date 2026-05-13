@@ -72,6 +72,16 @@ export interface ChatContext {
   channel: ChatChannel;
   userId: string;
   message: string;
+  /**
+   * KV segment for /undo (last batch). When set — e.g. Telegram `chat.id` —
+   * everyone in that chat shares one undo stack. Falls back to `userId` (web).
+   */
+  lastEntryScope?: string;
+}
+
+/** Undo memory key segment; use with rememberLastEntry / getLastEntry / forgetLastEntry. */
+export function undoScope(ctx: ChatContext): string {
+  return ctx.lastEntryScope ?? ctx.userId;
 }
 
 export interface BotReply {

@@ -9,7 +9,7 @@ import {
 import { getTodayIsoVNT, monthRange, parseMessage } from "./parser";
 import { runAgent } from "./agent";
 import { forgetLastEntry, getLastEntry, rememberLastEntry } from "./memory";
-import type { BotReply, ChatContext, Env, Intent, LastEntryItem } from "./types";
+import { type BotReply, type ChatContext, type Env, type Intent, type LastEntryItem, undoScope } from "./types";
 
 const HELP_TEXT = `Các lệnh hỗ trợ:
 - chi <so> <mo ta>            vd: chi 50k ăn trưa
@@ -17,7 +17,7 @@ const HELP_TEXT = `Các lệnh hỗ trợ:
 - Bỏ qua "chi" cũng được      vd: 50k cafe  (hoặc: cafe 50k)
 - Nhiều khoản 1 lần           vd: cà phê 20k, bột ngọt 50k, muối 10k, đường 22k
                               hoặc: chi 50k cafe; nạp 500k momo
-- /undo                       Huỷ bản ghi (hoặc cả lô) vừa nhập
+- /undo                       Huỷ bản ghi gần nhất trong chat
 - /today  /yesterday  /month  Thống kê nhanh
 - /total                       Số dư hiện tại
 - /help                        Xem hướng dẫn
@@ -63,15 +63,18 @@ async function executeIntent(env: Env, ctx: ChatContext, intent: Intent): Promis
       };
       const result = await logEntry(env, item);
       if (result.id) {
-        await rememberLastEntry(env, ctx.channel, ctx.userId, {
+        await rememberLastEntry(env, ctx.channel, undoScope(ctx), {
           items: [{ id: result.id, ...item }],
         });
       }
       const verb = intent.type === "spending" ? "Đã chi" : "Đã thu";
-      return {
-        text: `${verb} ${formatVnd(intent.amount)} - ${intent.description} (${intent.occurredAt}).\nNhập /undo nếu nhầm.`,
-        refresh: true,
-      };
+      let text = `${verb} ${formatVnd(intent.amount)} - ${intent.description} (${intent.occurredAt}).`;
+      if (result.id) {
+        const total = await fetchTotal(env);
+        text += `\nSố dư hiện tại: ${formatVnd(total)}.`;
+      }
+      text += "\nNhập /undo nếu nhầm.";
+      return { text, refresh: true };
     }
     case "logBatch": {
       const saved: LastEntryItem[] = [];
@@ -92,16 +95,18 @@ async function executeIntent(env: Env, ctx: ChatContext, intent: Intent): Promis
         else totalRecv += item.amount;
       }
 
-      if (saved.length > 0) {
-        await rememberLastEntry(env, ctx.channel, ctx.userId, { items: saved });
-      }
-
       if (totalSpend > 0 && totalRecv > 0) {
         lines.push(`Tổng chi: ${formatVnd(totalSpend)}, tổng thu: ${formatVnd(totalRecv)}.`);
       } else if (totalSpend > 0) {
         lines.push(`Tổng chi: ${formatVnd(totalSpend)}.`);
       } else if (totalRecv > 0) {
         lines.push(`Tổng thu: ${formatVnd(totalRecv)}.`);
+      }
+
+      if (saved.length > 0) {
+        await rememberLastEntry(env, ctx.channel, undoScope(ctx), { items: saved });
+        const total = await fetchTotal(env);
+        lines.push(`Số dư hiện tại: ${formatVnd(total)}.`);
       }
       lines.push(`Nhập /undo nếu nhầm (sẽ huỷ cả ${intent.items.length} bản ghi).`);
 
@@ -119,26 +124,26 @@ async function executeIntent(env: Env, ctx: ChatContext, intent: Intent): Promis
     }
     case "delete": {
       await deleteEntry(env, intent.id, intent.type);
-      const last = await getLastEntry(env, ctx.channel, ctx.userId);
+      const last = await getLastEntry(env, ctx.channel, undoScope(ctx));
       if (last) {
         const remaining = last.items.filter((i) => i.id !== intent.id);
         if (remaining.length === 0) {
-          await forgetLastEntry(env, ctx.channel, ctx.userId);
+          await forgetLastEntry(env, ctx.channel, undoScope(ctx));
         } else if (remaining.length !== last.items.length) {
-          await rememberLastEntry(env, ctx.channel, ctx.userId, { items: remaining });
+          await rememberLastEntry(env, ctx.channel, undoScope(ctx), { items: remaining });
         }
       }
       return { text: "Đã xoá.", refresh: true };
     }
     case "undo": {
-      const last = await getLastEntry(env, ctx.channel, ctx.userId);
+      const last = await getLastEntry(env, ctx.channel, undoScope(ctx));
       if (!last || last.items.length === 0) {
         return { text: "Không có bản ghi nào gần đây để huỷ." };
       }
       for (const item of last.items) {
         await deleteEntry(env, item.id, item.type);
       }
-      await forgetLastEntry(env, ctx.channel, ctx.userId);
+      await forgetLastEntry(env, ctx.channel, undoScope(ctx));
 
       if (last.items.length === 1) {
         const item = last.items[0];

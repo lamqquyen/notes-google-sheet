@@ -88,9 +88,9 @@ app.post("/telegram/webhook", async (c) => {
   try {
     const reply = await handleChat(c.env, {
       channel: "telegram",
-      // Per-user memory key so each member's /undo only affects their own batch,
-      // even when sharing a group.
       userId: String(message.from.id),
+      // Same chat (e.g. group) shares one /undo stack; private chat id == user id.
+      lastEntryScope: String(message.chat.id),
       message: stripBotMention(message.text),
     });
     await sendMessage(c.env, message.chat.id, reply.text);
